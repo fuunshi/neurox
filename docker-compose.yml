@@ -1,0 +1,258 @@
+# The whole pipeline, in one command.
+#
+#   make up          (or: docker compose up --build)
+#
+# Frontend, API, worker, NLP service, Postgres, Redis, RabbitMQ and Mailpit.
+#
+# **Why the ports are not the obvious ones.** This file is meant to run on a
+# developer's machine, where 3000, 5432, 6379 and 8025 are very often already
+# taken by something else — as they are on the machine this was written on. So
+# each service publishes on a host port chosen not to collide, and the
+# containers still talk to each other on the standard ports internally. Change
+# the left-hand side of a mapping freely; the right-hand side is what the
+# service itself binds and what its neighbours dial.
+#
+# **The order is enforced, not hoped for.** `setup` runs migrations and the
+# curriculum seed to completion before the API starts, and the API is healthy
+# before the web server accepts traffic. `depends_on` with a `service_healthy`
+# or `service_completed_successfully` condition is the difference between a
+# stack that comes up in order and one that comes up and then fails for a
+# minute.
+
+name: neurox
+
+x-backend-env: &backend-env
+  NODE_ENV: production
+  PORT: 3000
+  DATABASE_URL: postgresql://neurox:neurox@postgres:5432/neurox?schema=public
+  REDIS_HOST: redis
+  REDIS_PORT: 6379
+  RABBITMQ_URL: amqp://neurox:neurox@rabbitmq:5672
+  RABBITMQ_URLS: amqp://neurox:neurox@rabbitmq:5672
+  RABBITMQ_MAIL_QUEUE: mail.outbound
+  SMTP_HOST: mailpit
+  SMTP_PORT: 1025
+  SMTP_SECURE: "false"
+  # Where the API is reached from a browser, and where the frontend is. These
+  # are host-facing addresses by definition — they end up in emails and in the
+  # CORS allow-list — so they name the published ports, not the container ones.
+  APP_BASE_URL: http://localhost:3232
+  FRONTEND_URL: http://localhost:3001
+  # The brain is switched on for the assembled stack, which is the point of
+  # assembling it. Its generator is preferred over Gemini when both are
+  # available and costs nothing.
+  NEUROX_BRAIN_ENABLED: "true"
+  NEUROX_BRAIN_URL: http://neurox-brain:8000
+
+services:
+  # ---------------------------------------------------------------- storage --
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: neurox
+      POSTGRES_USER: neurox
+      POSTGRES_PASSWORD: neurox
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    ports:
+      # Published on a non-standard port so you can reach it with psql without
+      # stopping whatever already owns 5432 on the host.
+      - "55432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U neurox -d neurox"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    restart: unless-stopped
+
+  redis:
+    image: redis:7.4-alpine
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    restart: unless-stopped
+
+  rabbitmq:
+    image: rabbitmq:3.13-management-alpine
+    environment:
+      RABBITMQ_DEFAULT_USER: neurox
+      RABBITMQ_DEFAULT_PASS: neurox
+    volumes:
+      - rabbitmq-data:/var/lib/rabbitmq
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+    restart: unless-stopped
+
+  mailpit:
+    image: axllent/mailpit:latest
+    ports:
+      # 8026 rather than 8025, which a host Mailpit usually owns.
+      - "8026:8025"
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:8025"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    restart: unless-stopped
+
+  # ------------------------------------------------------------------- nlp ---
+  neurox-brain:
+    build:
+      context: ./neurox-brain
+      dockerfile: Dockerfile
+    image: neurox-brain:local
+    ports:
+      - "8000:8000"
+    volumes:
+      # The document-frequency corpus. Named, so keyword weights keep improving
+      # across `docker compose up` cycles instead of resetting to the cold-start
+      # prior every time.
+      - brain-data:/app/data
+    healthcheck:
+      # `start_period` is generous because the spaCy model is loaded during
+      # start-up. `/health` answers `loading` rather than blocking, so this
+      # passes only once the service is actually able to work.
+      test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8000/health').status == 200 else 1)"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 60s
+    restart: unless-stopped
+
+  # ----------------------------------------------------------------- setup ---
+  # Migrations and the syllabus seed, run once to completion before the API
+  # starts.
+  #
+  # This exists because the backend deliberately never migrates on boot — see
+  # ARCHITECTURE §13 — so without a defined ordering, `docker compose up` on a
+  # fresh volume gives an API that answers every request with a 500 against a
+  # schema that was never created. Measured, not assumed: that is exactly what
+  # happened before this service existed.
+  setup:
+    build:
+      context: ./neurox-backend
+      dockerfile: Dockerfile
+      target: runner
+    image: neurox-backend:local
+    env_file:
+      # Secrets — JWT_SECRET, TOKEN_HASH_SECRET and the SMTP credentials — come
+      # from here rather than from this file, which is committed. See
+      # `.env.example`; `make up` creates it if it is missing.
+      - path: .env
+        required: false
+    environment:
+      <<: *backend-env
+    depends_on:
+      postgres:
+        condition: service_healthy
+    # Both steps are idempotent — `migration:up` applies only what is pending
+    # and the seed upserts by path — so running them on every `up` is safe and
+    # keeps a fresh volume and an existing one on the same footing.
+    #
+    # **Invoked as compiled entry points, not as npm scripts.** The documented
+    # local commands are `pnpm run migrate:up` and `pnpm run curriculum:seed`,
+    # and the second is `nest start --entryFile seeder/curriculum` — which needs
+    # `@nestjs/cli`, a devDependency that `--prod` does not install. It fails in
+    # this image with "nest: not found". `node dist/seeder/curriculum.js` is the
+    # same code: the build compiles `src/` to `dist/`, and the script calls
+    # `bootstrap()` at module scope, so running it directly does exactly what
+    # the npm script does on a developer's machine.
+    #
+    # `@mikro-orm/cli` *is* a runtime dependency, deliberately, so the migration
+    # command is available here.
+    command:
+      - sh
+      - -c
+      - node_modules/.bin/mikro-orm migration:up && node dist/seeder/curriculum.js
+    restart: "no"
+
+  # ------------------------------------------------------------------- api ---
+  neurox-backend:
+    build:
+      context: ./neurox-backend
+      dockerfile: Dockerfile
+      target: runner
+    image: neurox-backend:local
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      <<: *backend-env
+    ports:
+      - "3232:3000"
+    depends_on:
+      setup:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+      neurox-brain:
+        condition: service_healthy
+    healthcheck:
+      # The exact command `docker-compose.uat.yml` uses, except against
+      # 127.0.0.1: that file's `localhost` resolves to IPv6 first and the app
+      # binds IPv4, so its probe can never connect. See ARCHITECTURE §13.
+      test: ["CMD", "wget", "--spider", "-q", "http://127.0.0.1:3000/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    restart: unless-stopped
+
+  # ---------------------------------------------------------------- worker ---
+  neurox-backend-worker:
+    image: neurox-backend:local
+    build:
+      context: ./neurox-backend
+      dockerfile: Dockerfile
+      target: runner
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      <<: *backend-env
+    # No ports: the worker serves no HTTP by design, which is also why it has
+    # no healthcheck — there is nothing to probe.
+    depends_on:
+      setup:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+    command: ["node", "dist/worker.main.js"]
+    restart: unless-stopped
+
+  # ------------------------------------------------------------------ web ----
+  neurox-web:
+    build:
+      context: ./neurox-web
+      dockerfile: Dockerfile
+    image: neurox-web:local
+    environment:
+      NODE_ENV: production
+      # Server-side only. The browser never learns either of these — it calls
+      # this app's own route handlers, which hold the session and attach the
+      # bearer token. That is why the API needs no public CORS entry for it.
+      BACKEND_BASE_URL: http://neurox-backend:3000
+      SITE_URL: http://localhost:3001
+      SESSION_COOKIE_SECURE: "false"
+    ports:
+      - "3001:3000"
+    depends_on:
+      neurox-backend:
+        condition: service_healthy
+    restart: unless-stopped
+
+volumes:
+  postgres-data:
+  redis-data:
+  rabbitmq-data:
+  brain-data:

@@ -1,0 +1,24 @@
+# Secrets. Generated from neurox-backend/.env.template by `make up`, with
+# JWT_SECRET and TOKEN_HASH_SECRET replaced by random values.
+#
+# Never committed: a repository that ships its own signing key has published
+# every session it will ever issue.
+.env
+
+# Build and dependency output, if anything is ever run from this directory
+# rather than inside a container.
+node_modules/
+.next/
+dist/
+.venv/
+__pycache__/
+
+# Runtime data. The Postgres and Redis volumes are Docker-managed so they do not
+# appear here, but the brain's corpus does if it is run without a container.
+data/
+
+# Editor and OS noise.
+.DS_Store
+*.swp
+.idea/
+.vscode/

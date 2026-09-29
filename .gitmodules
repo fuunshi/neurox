@@ -1,0 +1,9 @@
+[submodule "neurox-web"]
+	path = neurox-web
+	url = git@github.com:fuunshi/neurox-web.git
+[submodule "neurox-backend"]
+	path = neurox-backend
+	url = git@github.com:fuunshi/neurox-backend.git
+[submodule "neurox-brain"]
+	path = neurox-brain
+	url = git@github.com:fuunshi/neurox-brain.git
