@@ -43,6 +43,13 @@ x-backend-env: &backend-env
   # available and costs nothing.
   NEUROX_BRAIN_ENABLED: "true"
   NEUROX_BRAIN_URL: http://neurox-brain:8000
+  # Unused while the transport below is `http`, and set anyway. The template in
+  # `neurox-backend/.env.template` supplies `localhost:5672`, which inside this
+  # container is the API itself rather than the broker — so switching
+  # `NEUROX_BRAIN_TRANSPORT` to `amqp` would have failed to connect with an
+  # error naming the wrong host. `environment:` outranks `env_file:`, so this
+  # wins over the template.
+  NEUROX_BRAIN_AMQP_URL: amqp://neurox:neurox@rabbitmq:5672
 
 services:
   # ---------------------------------------------------------------- storage --
@@ -109,6 +116,13 @@ services:
       context: ./neurox-brain
       dockerfile: Dockerfile
     image: neurox-brain:local
+    environment:
+      # The counterpart of the API's `NEUROX_BRAIN_AMQP_URL`, and wrong for the
+      # same reason: the image's default is `localhost:5672`, which inside this
+      # container is this service, not the broker. Set here rather than left to
+      # the default so that enabling `amqp` on both sides works without also
+      # having to discover this.
+      BRAIN_AMQP_URL: amqp://neurox:neurox@rabbitmq:5672
     ports:
       - "8000:8000"
     volumes:
