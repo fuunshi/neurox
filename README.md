@@ -8,7 +8,8 @@ neurox/
 ├── neurox-backend   NestJS API + worker       — the domain, the queue, the socket
 ├── neurox-brain     Python NLP service        — text into cards, quizzes, keywords
 ├── docker-compose.yml
-└── Makefile
+├── Makefile         the entry point on macOS and Linux
+└── neurox.ps1       the same entry point on Windows — make.bat forwards to it
 ```
 
 Each is its own repository, linked here as a **git submodule** — so this
@@ -46,6 +47,26 @@ make health   # probe each service
 make down     # stop, keeping data
 make clean    # stop and DELETE all data
 ```
+
+### On Windows
+
+Make is not one of the things Windows ships. The same commands live in
+`neurox.ps1` beside it, because PowerShell is already on the machine:
+
+```powershell
+.\neurox.ps1 up        # make up
+.\neurox.ps1           # make — lists every command
+.\neurox.ps1 logs      # make logs
+```
+
+`make.bat` forwards to that script, so `make up` works from `cmd.exe` too.
+
+One difference worth knowing. On Linux, `make up` installs Docker if it is
+missing; on Windows, `.\neurox.ps1 up` will not, because installing Docker
+Desktop is a download, a licence and usually a restart — not something to start
+from inside another command. `.\neurox.ps1 docker` is the one that offers to do
+it, and `up` will point you there if Docker is missing or Docker Desktop is not
+running.
 
 ## Showing it to somebody
 

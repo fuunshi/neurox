@@ -1,0 +1,12 @@
+# cmd.exe parses a batch file by its line endings, and an LF-only one can fail
+# in ways that look like the script itself is broken. `eol=crlf` keeps these
+# CRLF in the working tree on every platform, whatever core.autocrlf happens to
+# be set to on the machine doing the checkout — which is the setting nobody
+# remembers and the reason "it works on my machine" has a Windows chapter.
+*.bat text eol=crlf
+*.cmd text eol=crlf
+
+# The shell scripts are for macOS and Linux. A Windows clone with autocrlf on
+# would otherwise hand CRLF to bash, where `set -euo pipefail` and friends
+# dislike a stray carriage return as much as you would.
+*.sh text eol=lf
