@@ -14,7 +14,7 @@ FILE := -f docker-compose.yml
 
 .DEFAULT_GOAL := help
 .PHONY: help docker up down restart stop start logs ps clean nuke \
-        migrate seed psql shell-backend shell-brain test check health
+        migrate seed seed\:demo psql shell-backend shell-brain test check health
 
 # ------------------------------------------------------------------- help --- #
 help: ## Show this help
@@ -30,6 +30,7 @@ help: ## Show this help
 	@echo "  make docker      Install Docker if it is missing"
 	@echo "  make migrate     Apply pending database migrations"
 	@echo "  make seed        Install the syllabus (idempotent)"
+	@echo "  make seed:demo   Seed the demo account (admin@neurox.ai) — for demos"
 	@echo "  make psql        Open a psql shell on the running database"
 	@echo "  make shell-backend  A shell inside the API container"
 	@echo "  make test        Run the test suites for all three projects"
@@ -109,6 +110,20 @@ migrate: ## Apply pending migrations
 
 seed: ## Install the syllabus
 	@$(COMPOSE) $(FILE) exec neurox-backend node dist/seeder/curriculum.js
+
+# The demo account: admin@neurox.ai, with decks, review history, a streak and
+# completed quizzes, for showing the product without first having to use it.
+#
+# **Deliberately not part of `make up`.** It creates an account whose password is
+# in this file, and it wipes that account's data every time it runs. Both are
+# fine on a laptop and neither belongs in a stack somebody else might be using.
+#
+# The colon in the target name is escaped because Make reads an unescaped one as
+# the target/prerequisite separator — `seed:demo:` is a syntax error, and
+# `seed\:demo:` is a target literally called `seed:demo`, which is what
+# `make seed:demo` types.
+seed\:demo: ## Seed the demo account (admin@neurox.ai)
+	@$(COMPOSE) $(FILE) exec neurox-backend node dist/seeder/seed.js
 
 psql: ## psql shell on the running database
 	@$(COMPOSE) $(FILE) exec postgres psql -U neurox -d neurox

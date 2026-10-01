@@ -47,6 +47,23 @@ make down     # stop, keeping data
 make clean    # stop and DELETE all data
 ```
 
+## Showing it to somebody
+
+```bash
+make seed:demo
+```
+
+Creates `admin@neurox.ai` / `demo_admin@123` — five decks, sixty days of
+review history, completed quizzes and an activity feed, so the app has
+something in it without anyone first having to use it. Run it again any time;
+it clears that account's data and rebuilds it.
+
+Two things about it. The password is in `Makefile`, so it belongs on a laptop
+and not anywhere shared. And the streak it reports is the one the app will
+show, which is measured in the account's own timezone — `Asia/Kathmandu` — so
+a seeded account can honestly read "1-day streak" while the reviews behind it
+run back two months. That is the streak rule working, not a gap in the data.
+
 ## Already cloned without submodules?
 
 ```bash
